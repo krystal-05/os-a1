@@ -4,6 +4,7 @@
 #include "riscv.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "uproc.h"
 #include "defs.h"
 
 struct cpu cpus[NCPU];
@@ -167,6 +168,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->trace_mask = 0;
   p->state = UNUSED;
 }
 
@@ -288,6 +290,7 @@ kfork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+  np->trace_mask = p->trace_mask;
 
   pid = np->pid;
 
@@ -302,6 +305,58 @@ kfork(void)
   release(&np->lock);
 
   return pid;
+}
+
+uint64
+countprocs(void)
+{
+  uint64 count = 0;
+  struct proc *p;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED)
+      count++;
+    release(&p->lock);
+  }
+  return count;
+}
+
+int
+getprocs(uint64 addr, int max)
+{
+  struct proc *p;
+  struct proc *caller = myproc();
+  int count = 0;
+
+  if (max < 0)
+    return -1;
+
+  for (p = proc; p < &proc[NPROC] && count < max; p++) {
+    struct uproc u;
+    int present;
+
+    acquire(&wait_lock);
+    acquire(&p->lock);
+    present = p->state != UNUSED;
+    if (present) {
+      u.pid = p->pid;
+      u.ppid = p->parent ? p->parent->pid : 0;
+      u.state = p->state;
+      u.sz = p->sz;
+      safestrcpy(u.name, p->name, sizeof(u.name));
+    }
+    release(&p->lock);
+    release(&wait_lock);
+
+    if (present) {
+      if (copyout(caller->pagetable, caller->sz,
+                  addr + count * sizeof(u), (char *)&u, sizeof(u)) < 0)
+        return -1;
+      count++;
+    }
+  }
+  return count;
 }
 
 // Pass p's abandoned children to init.

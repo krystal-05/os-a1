@@ -25,6 +25,20 @@ fileinit(void)
   initlock(&ftable.lock, "ftable");
 }
 
+uint64
+countopenfiles(void)
+{
+  uint64 count = 0;
+  struct file *f;
+
+  acquire(&ftable.lock);
+  for (f = ftable.file; f < ftable.file + NFILE; f++)
+    if (f->ref > 0)
+      count++;
+  release(&ftable.lock);
+  return count;
+}
+
 // Allocate a file structure.
 struct file *
 filealloc(void)
